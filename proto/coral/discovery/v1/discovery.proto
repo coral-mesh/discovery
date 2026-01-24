@@ -1,0 +1,373 @@
+syntax = "proto3";
+package coral.discovery.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Note: While this is a separate binary, the proto package is still in the coral monorepo
+option go_package = "github.com/coral-mesh/coral/proto/discovery/v1;discoverypb";
+
+// Discovery service for colony and agent coordination
+service DiscoveryService {
+  // Register or update a colony's information
+  rpc RegisterColony(RegisterColonyRequest) returns (RegisterColonyResponse);
+
+  // Lookup colony information by mesh ID
+  rpc LookupColony(LookupColonyRequest) returns (LookupColonyResponse);
+
+  // Register or update an agent's information
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+
+  // Lookup agent information by agent ID
+  rpc LookupAgent(LookupAgentRequest) returns (LookupAgentResponse);
+
+  // Request a relay allocation for NAT traversal
+  rpc RequestRelay(RequestRelayRequest) returns (RequestRelayResponse);
+
+  // Release a relay allocation
+  rpc ReleaseRelay(ReleaseRelayRequest) returns (ReleaseRelayResponse);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Create a single-use bootstrap token for agent certificate issuance (RFD 047/049).
+  rpc CreateBootstrapToken(CreateBootstrapTokenRequest) returns (CreateBootstrapTokenResponse);
+}
+
+// Registration request
+message RegisterColonyRequest {
+  // Unique mesh identifier for this colony
+  string mesh_id = 1;
+
+  // WireGuard public key (base64 encoded)
+  string pubkey = 2;
+
+  // Colony endpoints (IP:port pairs)
+  repeated string endpoints = 3;
+
+  // Private mesh IPv4 address (e.g., "10.42.0.1")
+  string mesh_ipv4 = 4;
+
+  // Private mesh IPv6 address (e.g., "fd42::1")
+  string mesh_ipv6 = 5;
+
+  // Buf Connect HTTP/2 port (e.g., 9000) - internal mesh communication.
+  uint32 connect_port = 6;
+
+  // Optional metadata
+  map<string, string> metadata = 7;
+
+  // Observed endpoint from external STUN server (optional)
+  Endpoint observed_endpoint = 8;
+
+  // Public HTTPS port for bootstrap and remote access (e.g., 8443).
+  uint32 public_port = 9;
+
+  // Public HTTPS endpoint information for CLI access (RFD 085).
+  PublicEndpointInfo public_endpoint = 10;
+}
+
+message RegisterColonyResponse {
+  // Registration successful
+  bool success = 1;
+
+  // TTL for this registration in seconds
+  int32 ttl = 2;
+
+  // When this registration expires
+  google.protobuf.Timestamp expires_at = 3;
+
+  // Observed public endpoint as seen by Discovery
+  Endpoint observed_endpoint = 4;
+
+  // Recommended fallback STUN servers for NAT discovery (optional).
+  // Primary STUN mechanism is colony-based STUN (RFD 029).
+  // Clients may ignore this list and use their own configured STUN servers.
+  repeated string stun_servers = 5;
+}
+
+// Lookup request
+message LookupColonyRequest {
+  // Mesh ID to look up
+  string mesh_id = 1;
+}
+
+message LookupColonyResponse {
+  // Mesh ID
+  string mesh_id = 1;
+
+  // WireGuard public key
+  string pubkey = 2;
+
+  // Colony endpoints
+  repeated string endpoints = 3;
+
+  // Private mesh IPv4 address (e.g., "10.42.0.1")
+  string mesh_ipv4 = 4;
+
+  // Private mesh IPv6 address (e.g., "fd42::1")
+  string mesh_ipv6 = 5;
+
+  // Buf Connect HTTP/2 port (e.g., 9000) - internal mesh communication.
+  uint32 connect_port = 6;
+
+  // Metadata
+  map<string, string> metadata = 7;
+
+  // Last seen timestamp
+  google.protobuf.Timestamp last_seen = 8;
+
+  // Observed public endpoints for NAT traversal
+  repeated Endpoint observed_endpoints = 9;
+
+  // NAT type hint for connection strategy
+  NatHint nat = 10;
+
+  // Available relay options for fallback
+  repeated RelayOption relays = 11;
+
+  // Public HTTPS port for bootstrap and remote access (e.g., 8443).
+  uint32 public_port = 12;
+
+  // Public HTTPS endpoint information for CLI access (RFD 085).
+  PublicEndpointInfo public_endpoint = 13;
+}
+
+// Health check
+message HealthRequest {}
+
+message HealthResponse {
+  // Service status
+  string status = 1;
+
+  // Service version
+  string version = 2;
+
+  // Uptime in seconds
+  int64 uptime_seconds = 3;
+
+  // Number of registered colonies
+  int32 registered_colonies = 4;
+}
+
+// NAT traversal types
+
+// Endpoint represents a network endpoint for connectivity.
+message Endpoint {
+  // IP address (IPv4 or IPv6)
+  string ip = 1;
+
+  // Port number
+  uint32 port = 2;
+
+  // Protocol (typically "udp")
+  string protocol = 3;
+
+  // Whether this endpoint is via a relay
+  bool via_relay = 4;
+}
+
+// NAT type classification for connection strategy.
+enum NatHint {
+  NAT_UNKNOWN = 0;
+  NAT_CONE = 1;
+  NAT_RESTRICTED = 2;
+  NAT_SYMMETRIC = 3;
+}
+
+// RelayOption describes an available relay server.
+message RelayOption {
+  // Relay server endpoint
+  Endpoint endpoint = 1;
+
+  // Relay identifier
+  string relay_id = 2;
+
+  // Geographic region (for latency optimization)
+  string region = 3;
+
+  // Current load (0-100)
+  uint32 load = 4;
+}
+
+// RequestRelayRequest initiates a relay allocation.
+message RequestRelayRequest {
+  // Mesh ID for the colony
+  string mesh_id = 1;
+
+  // Agent's WireGuard public key (base64 encoded)
+  string agent_pubkey = 2;
+
+  // Colony's WireGuard public key (base64 encoded)
+  string colony_pubkey = 3;
+}
+
+// RequestRelayResponse returns relay allocation details.
+message RequestRelayResponse {
+  // Assigned relay endpoint
+  Endpoint relay_endpoint = 1;
+
+  // Session identifier for this relay allocation
+  string session_id = 2;
+
+  // Expiration time for this relay session
+  google.protobuf.Timestamp expires_at = 3;
+
+  // Relay server identifier
+  string relay_id = 4;
+}
+
+// ReleaseRelayRequest releases a relay allocation.
+message ReleaseRelayRequest {
+  // Session identifier to release
+  string session_id = 1;
+
+  // Mesh ID
+  string mesh_id = 2;
+}
+
+// ReleaseRelayResponse confirms relay release.
+message ReleaseRelayResponse {
+  // Release successful
+  bool success = 1;
+}
+
+// Agent registration
+
+// RegisterAgentRequest registers or updates an agent.
+message RegisterAgentRequest {
+  // Agent ID
+  string agent_id = 1;
+
+  // Colony/Mesh ID the agent belongs to
+  string mesh_id = 2;
+
+  // WireGuard public key (base64 encoded)
+  string pubkey = 3;
+
+  // Agent endpoints (for reverse connectivity)
+  repeated string endpoints = 4;
+
+  // Observed endpoint from external STUN server (optional)
+  Endpoint observed_endpoint = 5;
+
+  // Optional metadata
+  map<string, string> metadata = 6;
+}
+
+// RegisterAgentResponse returns registration result.
+message RegisterAgentResponse {
+  // Registration successful
+  bool success = 1;
+
+  // TTL for this registration in seconds
+  int32 ttl = 2;
+
+  // When this registration expires
+  google.protobuf.Timestamp expires_at = 3;
+
+  // Observed public endpoint as seen by Discovery
+  Endpoint observed_endpoint = 4;
+
+  // Recommended fallback STUN servers for NAT discovery (optional).
+  // Primary STUN mechanism is colony-based STUN (RFD 029).
+  // Clients may ignore this list and use their own configured STUN servers.
+  repeated string stun_servers = 5;
+}
+
+// LookupAgentRequest looks up an agent.
+message LookupAgentRequest {
+  // Agent ID to look up
+  string agent_id = 1;
+}
+
+// LookupAgentResponse returns agent information.
+message LookupAgentResponse {
+  // Agent ID
+  string agent_id = 1;
+
+  // Mesh ID
+  string mesh_id = 2;
+
+  // WireGuard public key
+  string pubkey = 3;
+
+  // Agent endpoints
+  repeated string endpoints = 4;
+
+  // Observed public endpoints for NAT traversal
+  repeated Endpoint observed_endpoints = 5;
+
+  // NAT type hint
+  NatHint nat = 6;
+
+  // Metadata
+  map<string, string> metadata = 7;
+
+  // Last seen timestamp
+  google.protobuf.Timestamp last_seen = 8;
+}
+
+// Public endpoint information for non-WireGuard CLI access (RFD 085).
+message PublicEndpointInfo {
+  // Whether the public endpoint is enabled and advertised.
+  bool enabled = 1;
+
+  // Public HTTPS endpoint URL (e.g., "https://colony.example.com:8443").
+  string url = 2;
+
+  // CA certificate for TLS verification (PEM-encoded, then base64).
+  // Clients use this to verify the colony's TLS certificate.
+  string ca_cert = 3;
+
+  // CA certificate fingerprint for TOFU verification.
+  CertificateFingerprint ca_fingerprint = 4;
+
+  // When the public endpoint info was last updated.
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// Algorithm used for certificate fingerprint computation.
+enum FingerprintAlgorithm {
+  FINGERPRINT_ALGORITHM_UNSPECIFIED = 0;
+  FINGERPRINT_ALGORITHM_SHA256 = 1;
+  // Reserved for future use:
+  // FINGERPRINT_ALGORITHM_SHA384 = 2;
+  // FINGERPRINT_ALGORITHM_SHA512 = 3;
+  // FINGERPRINT_ALGORITHM_BLAKE3 = 4;
+}
+
+// Certificate fingerprint with explicit algorithm specification.
+message CertificateFingerprint {
+  // Hash algorithm used to compute the fingerprint.
+  FingerprintAlgorithm algorithm = 1;
+
+  // Raw fingerprint bytes (not hex-encoded).
+  // For SHA256, this is exactly 32 bytes.
+  bytes value = 2;
+}
+
+// Bootstrap token messages (RFD 047 - Colony CA Infrastructure, RFD 049 - Discovery Authorization)
+
+// CreateBootstrapTokenRequest initiates bootstrap token issuance.
+message CreateBootstrapTokenRequest {
+  // Reef identifier.
+  string reef_id = 1;
+
+  // Colony/Mesh identifier.
+  string colony_id = 2;
+
+  // Agent identifier.
+  string agent_id = 3;
+
+  // Intent (e.g., "register", "renew").
+  string intent = 4;
+}
+
+// CreateBootstrapTokenResponse returns a single-use JWT token.
+message CreateBootstrapTokenResponse {
+  // JWT bootstrap token (single-use, short TTL).
+  string jwt = 1;
+
+  // Token expiration timestamp (Unix seconds).
+  int64 expires_at = 2;
+}
