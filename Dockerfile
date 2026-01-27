@@ -1,6 +1,6 @@
 # Multi-stage build for Cloudflare Worker
 # Stage 1: Build Wasm (using TinyGo)
-FROM tinygo/tinygo:0.33.0 AS wasm-builder
+FROM tinygo/tinygo:0.39.0 AS wasm-builder
 
 USER root
 
