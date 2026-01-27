@@ -1,5 +1,6 @@
 import type { Env, ColonyRecord, AgentRecord, EndpointRecord, Config } from "./types";
 import { parseConfig } from "./types";
+import { createLogger, parseLogLevel, type Logger } from "./logger";
 
 /**
  * SQL schema for the registry.
@@ -74,6 +75,7 @@ export class ColonyRegistry implements DurableObject {
   private sql: SqlStorage;
   private config: Config;
   private startTime: number;
+  private log: Logger;
 
   constructor(
     private ctx: DurableObjectState,
@@ -82,6 +84,7 @@ export class ColonyRegistry implements DurableObject {
     this.sql = ctx.storage.sql;
     this.config = parseConfig(env);
     this.startTime = Date.now();
+    this.log = createLogger(parseLogLevel(env.LOG_LEVEL));
 
     // Initialize schema.
     this.initSchema();
@@ -112,13 +115,13 @@ export class ColonyRegistry implements DurableObject {
     try {
       // Route internal API calls.
       if (path === "/register-colony") {
-        return this.handleRegisterColony(request);
+        return await this.handleRegisterColony(request);
       } else if (path === "/lookup-colony") {
-        return this.handleLookupColony(request);
+        return await this.handleLookupColony(request);
       } else if (path === "/register-agent") {
-        return this.handleRegisterAgent(request);
+        return await this.handleRegisterAgent(request);
       } else if (path === "/lookup-agent") {
-        return this.handleLookupAgent(request);
+        return await this.handleLookupAgent(request);
       } else if (path === "/health") {
         return this.handleHealth();
       } else if (path === "/count") {
@@ -130,7 +133,7 @@ export class ColonyRegistry implements DurableObject {
       if (err instanceof ConnectError) {
         return Response.json({ error: err.message, code: err.code }, { status: 400 });
       }
-      console.error("Registry error:", err);
+      this.log.error("Registry error:", err);
       return Response.json({ error: "Internal error" }, { status: 500 });
     }
   }
@@ -172,6 +175,8 @@ export class ColonyRegistry implements DurableObject {
       };
       observedIP?: string;
     };
+
+    this.log.debug(`[Registry] RegisterColony called with meshId: ${body.meshId}, pubkey: ${body.pubkey?.substring(0, 20)}..., endpoints: ${JSON.stringify(body.endpoints)}, publicPort: ${body.publicPort}`);
 
     // Validate required fields.
     if (!body.meshId) {
@@ -265,6 +270,8 @@ export class ColonyRegistry implements DurableObject {
       );
     }
 
+    this.log.debug(`[Registry] RegisterColony SUCCESS for meshId: ${body.meshId}, expiresAt: ${expiresAt}`);
+
     return Response.json({
       success: true,
       ttl: this.config.defaultTTLSeconds,
@@ -279,11 +286,20 @@ export class ColonyRegistry implements DurableObject {
   private async handleLookupColony(request: Request): Promise<Response> {
     const body = await request.json() as { meshId: string };
 
+    this.log.debug(`[Registry] LookupColony called with meshId: ${body.meshId}`);
+
     if (!body.meshId) {
       throw new ConnectError("mesh_id is required", ConnectErrorCode.InvalidArgument);
     }
 
     const now = Date.now();
+
+    // First, log all colonies in the database for debugging.
+    const allColonies = this.sql
+      .exec<{ mesh_id: string; expires_at: number }>(`SELECT mesh_id, expires_at FROM colonies`)
+      .toArray();
+    this.log.debug(`[Registry] All colonies in DB:`, JSON.stringify(allColonies), `current time: ${now}`);
+
     const rows = this.sql
       .exec<{
         mesh_id: string;
@@ -305,6 +321,8 @@ export class ColonyRegistry implements DurableObject {
       )
       .toArray();
 
+    this.log.debug(`[Registry] LookupColony query result for ${body.meshId}: ${rows.length} rows found`);
+
     if (rows.length === 0) {
       throw new ConnectError(`colony ${body.meshId} not found`, ConnectErrorCode.NotFound);
     }
@@ -315,7 +333,7 @@ export class ColonyRegistry implements DurableObject {
       observedEndpoints.push(JSON.parse(row.observed_endpoint));
     }
 
-    return Response.json({
+    const response = {
       meshId: row.mesh_id,
       pubkey: row.pubkey,
       endpoints: JSON.parse(row.endpoints),
@@ -328,7 +346,11 @@ export class ColonyRegistry implements DurableObject {
       observedEndpoints,
       nat: row.nat_hint,
       publicEndpoint: row.public_endpoint ? JSON.parse(row.public_endpoint) : undefined,
-    });
+    };
+
+    this.log.debug(`[Registry] LookupColony SUCCESS for ${body.meshId}: pubkey=${row.pubkey?.substring(0, 20)}..., endpoints=${row.endpoints}, publicPort=${row.public_port}`);
+
+    return Response.json(response);
   }
 
   /**
@@ -344,6 +366,8 @@ export class ColonyRegistry implements DurableObject {
       metadata?: Record<string, string>;
       observedIP?: string;
     };
+
+    this.log.debug(`[Registry] RegisterAgent called with agentId: ${body.agentId}, meshId: ${body.meshId}, pubkey: ${body.pubkey?.substring(0, 20)}..., endpoints: ${JSON.stringify(body.endpoints)}`);
 
     // Validate required fields.
     if (!body.agentId) {
@@ -390,6 +414,8 @@ export class ColonyRegistry implements DurableObject {
       expiresAt
     );
 
+    this.log.debug(`[Registry] RegisterAgent SUCCESS for agentId: ${body.agentId}, meshId: ${body.meshId}, expiresAt: ${expiresAt}`);
+
     return Response.json({
       success: true,
       ttl: this.config.defaultTTLSeconds,
@@ -403,6 +429,8 @@ export class ColonyRegistry implements DurableObject {
    */
   private async handleLookupAgent(request: Request): Promise<Response> {
     const body = await request.json() as { agentId: string };
+
+    this.log.debug(`[Registry] LookupAgent called with agentId: ${body.agentId}`);
 
     if (!body.agentId) {
       throw new ConnectError("agent_id is required", ConnectErrorCode.InvalidArgument);

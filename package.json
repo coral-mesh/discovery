@@ -13,15 +13,15 @@
     "wasm:build": "cd wasm && make build"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.0.0",
-    "@connectrpc/connect": "^2.0.0"
+    "@bufbuild/protobuf": "latest",
+    "@connectrpc/connect": "latest"
   },
   "devDependencies": {
-    "@bufbuild/buf": "^1.30.0",
-    "@bufbuild/protoc-gen-es": "^2.0.0",
+    "@bufbuild/buf": "latest",
+    "@bufbuild/protoc-gen-es": "latest",
     "@cloudflare/vitest-pool-workers": "^0.5.0",
     "@cloudflare/workers-types": "^4.0.0",
-    "@connectrpc/protoc-gen-connect-es": "^2.0.0",
+    "@connectrpc/protoc-gen-connect-es": "latest",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0",
     "wrangler": "^3.0.0"

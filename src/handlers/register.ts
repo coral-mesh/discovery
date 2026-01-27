@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { ConnectError, ConnectErrorCode } from "../registry";
+import type { Logger } from "../logger";
 
 /**
  * Handle RegisterColony RPC.
@@ -30,19 +31,23 @@ export async function handleRegisterColony(
       };
     };
   },
-  clientIP?: string
+  clientIP?: string,
+  log?: Logger
 ): Promise<{
   success: boolean;
   ttl: number;
-  expiresAt: { seconds: bigint };
+  expiresAt: string; // RFC 3339 string for ProtoJSON compatibility.
   observedEndpoint?: {
     ip: string;
     port: number;
     protocol: string;
   };
 }> {
+  log?.debug(`[Handler] RegisterColony: meshId=${request.meshId}, pubkey=${request.pubkey?.substring(0, 20)}..., endpoints=${JSON.stringify(request.endpoints)}, clientIP=${clientIP}`);
+
   // Get the Durable Object for this mesh.
   const registryId = env.COLONY_REGISTRY.idFromName(request.meshId);
+  log?.debug(`[Handler] RegisterColony: DO id=${registryId.toString()}`);
   const registry = env.COLONY_REGISTRY.get(registryId);
 
   // Forward request to Durable Object.
@@ -76,7 +81,7 @@ export async function handleRegisterColony(
   return {
     success: result.success,
     ttl: result.ttl,
-    expiresAt: { seconds: BigInt(result.expiresAt) },
+    expiresAt: new Date(result.expiresAt).toISOString(),
     observedEndpoint: result.observedEndpoint,
   };
 }
@@ -98,19 +103,23 @@ export async function handleRegisterAgent(
     };
     metadata?: Record<string, string>;
   },
-  clientIP?: string
+  clientIP?: string,
+  log?: Logger
 ): Promise<{
   success: boolean;
   ttl: number;
-  expiresAt: { seconds: bigint };
+  expiresAt: string; // RFC 3339 string for ProtoJSON compatibility.
   observedEndpoint?: {
     ip: string;
     port: number;
     protocol: string;
   };
 }> {
+  log?.debug(`[Handler] RegisterAgent: agentId=${request.agentId}, meshId=${request.meshId}, pubkey=${request.pubkey?.substring(0, 20)}..., endpoints=${JSON.stringify(request.endpoints)}, clientIP=${clientIP}`);
+
   // Use the mesh ID to route to the correct Durable Object.
   const registryId = env.COLONY_REGISTRY.idFromName(request.meshId);
+  log?.debug(`[Handler] RegisterAgent: DO id=${registryId.toString()}`);
   const registry = env.COLONY_REGISTRY.get(registryId);
 
   // Forward request to Durable Object.
@@ -144,7 +153,7 @@ export async function handleRegisterAgent(
   return {
     success: result.success,
     ttl: result.ttl,
-    expiresAt: { seconds: BigInt(result.expiresAt) },
+    expiresAt: new Date(result.expiresAt).toISOString(),
     observedEndpoint: result.observedEndpoint,
   };
 }

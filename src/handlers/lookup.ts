@@ -1,12 +1,14 @@
 import type { Env } from "../types";
 import { ConnectError, ConnectErrorCode } from "../registry";
+import type { Logger } from "../logger";
 
 /**
  * Handle LookupColony RPC.
  */
 export async function handleLookupColony(
   env: Env,
-  request: { meshId: string }
+  request: { meshId: string },
+  log?: Logger
 ): Promise<{
   meshId: string;
   pubkey: string;
@@ -16,7 +18,7 @@ export async function handleLookupColony(
   connectPort?: number;
   publicPort?: number;
   metadata?: Record<string, string>;
-  lastSeen?: { seconds: bigint };
+  lastSeen?: string; // RFC 3339 string for ProtoJSON compatibility.
   observedEndpoints?: Array<{
     ip: string;
     port: number;
@@ -29,12 +31,15 @@ export async function handleLookupColony(
     caCert?: string;
     caFingerprint?: {
       algorithm: number;
-      value: Uint8Array;
+      value: string; // Base64 encoded bytes for ProtoJSON compatibility.
     };
   };
 }> {
+  log?.debug(`[Handler] LookupColony: meshId=${request.meshId}`);
+
   // Get the Durable Object for this mesh.
   const registryId = env.COLONY_REGISTRY.idFromName(request.meshId);
+  log?.debug(`[Handler] LookupColony: DO id=${registryId.toString()}`);
   const registry = env.COLONY_REGISTRY.get(registryId);
 
   // Forward request to Durable Object.
@@ -87,7 +92,7 @@ export async function handleLookupColony(
     connectPort: result.connectPort,
     publicPort: result.publicPort,
     metadata: result.metadata,
-    lastSeen: result.lastSeen ? { seconds: BigInt(result.lastSeen) } : undefined,
+    lastSeen: result.lastSeen ? new Date(result.lastSeen).toISOString() : undefined,
     observedEndpoints: result.observedEndpoints,
     nat: result.nat,
     publicEndpoint: result.publicEndpoint
@@ -96,9 +101,7 @@ export async function handleLookupColony(
           caFingerprint: result.publicEndpoint.caFingerprint
             ? {
                 algorithm: result.publicEndpoint.caFingerprint.algorithm,
-                value: new Uint8Array(
-                  Buffer.from(result.publicEndpoint.caFingerprint.value, "base64")
-                ),
+                value: result.publicEndpoint.caFingerprint.value, // value is already base64 string
               }
             : undefined,
         }
@@ -108,11 +111,14 @@ export async function handleLookupColony(
 
 /**
  * Handle LookupAgent RPC.
+ *
+ * Note: The Workers implementation requires meshId to route to the correct
+ * Durable Object. Clients should include meshId in the request body.
  */
 export async function handleLookupAgent(
   env: Env,
-  request: { agentId: string },
-  meshIdHint?: string
+  request: { agentId: string; meshId?: string },
+  log?: Logger
 ): Promise<{
   agentId: string;
   meshId: string;
@@ -124,18 +130,20 @@ export async function handleLookupAgent(
     protocol: string;
   }>;
   metadata?: Record<string, string>;
-  lastSeen?: { seconds: bigint };
+  lastSeen?: string; // RFC 3339 string for ProtoJSON compatibility.
 }> {
-  // If we have a mesh ID hint, use it to route directly.
-  // Otherwise, we need to search across all DOs (not implemented - would need a global index).
-  if (!meshIdHint) {
+  log?.debug(`[Handler] LookupAgent: agentId=${request.agentId}, meshId=${request.meshId}`);
+
+  // Workers implementation requires meshId to route to the correct Durable Object.
+  // The original Go server maintains a global index, but Workers uses partitioned DOs.
+  if (!request.meshId) {
     throw new ConnectError(
-      "mesh_id hint required for agent lookup in Workers implementation",
+      "mesh_id required for agent lookup in Workers implementation (include meshId in request body)",
       ConnectErrorCode.InvalidArgument
     );
   }
 
-  const registryId = env.COLONY_REGISTRY.idFromName(meshIdHint);
+  const registryId = env.COLONY_REGISTRY.idFromName(request.meshId);
   const registry = env.COLONY_REGISTRY.get(registryId);
 
   // Forward request to Durable Object.
@@ -173,6 +181,6 @@ export async function handleLookupAgent(
     endpoints: result.endpoints,
     observedEndpoints: result.observedEndpoints,
     metadata: result.metadata,
-    lastSeen: result.lastSeen ? { seconds: BigInt(result.lastSeen) } : undefined,
+    lastSeen: result.lastSeen ? new Date(result.lastSeen).toISOString() : undefined,
   };
 }

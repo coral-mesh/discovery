@@ -12,6 +12,8 @@ import { handleRegisterColony, handleRegisterAgent } from "./handlers/register";
 import { handleLookupColony, handleLookupAgent } from "./handlers/lookup";
 import { handleHealth } from "./handlers/health";
 import { handleCreateBootstrapToken } from "./handlers/bootstrap";
+import { getJWKS } from "./crypto";
+import { createLogger, parseLogLevel, type Logger } from "./logger";
 
 // Re-export Durable Object class.
 export { ColonyRegistry };
@@ -24,6 +26,7 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+    const log = createLogger(parseLogLevel(env.LOG_LEVEL));
 
     // Get client IP from Cloudflare headers.
     const clientIP = request.headers.get("CF-Connecting-IP") || undefined;
@@ -32,12 +35,12 @@ export default {
       // Handle Connect protocol routes.
       // Connect uses POST with paths like /coral.discovery.v1.DiscoveryService/RegisterColony
       if (method === "POST" && path.startsWith("/coral.discovery.v1.DiscoveryService/")) {
-        return await handleConnectRequest(request, env, path, clientIP);
+        return await handleConnectRequest(request, env, path, clientIP, log);
       }
 
       // Handle JWKS endpoint for token verification.
       if (method === "GET" && path === "/.well-known/jwks.json") {
-        return handleJWKS(env);
+        return await handleJWKS(env, log);
       }
 
       // Handle simple health check.
@@ -51,7 +54,7 @@ export default {
       // Not found.
       return new Response("Not Found", { status: 404 });
     } catch (err) {
-      console.error("Worker error:", err);
+      log.error("Worker error:", err);
 
       if (err instanceof ConnectError) {
         return createConnectErrorResponse(err);
@@ -69,7 +72,8 @@ async function handleConnectRequest(
   request: Request,
   env: Env,
   path: string,
-  clientIP?: string
+  clientIP: string | undefined,
+  log: Logger
 ): Promise<Response> {
   // Extract RPC name from path.
   const rpcName = path.replace("/coral.discovery.v1.DiscoveryService/", "");
@@ -89,6 +93,9 @@ async function handleConnectRequest(
     body = await request.json();
   }
 
+  // Log incoming request for debugging.
+  log.debug(`[Discovery] RPC: ${rpcName}, clientIP: ${clientIP}, body:`, JSON.stringify(body));
+
   // Route to appropriate handler.
   try {
     let result: unknown;
@@ -98,14 +105,16 @@ async function handleConnectRequest(
         result = await handleRegisterColony(
           env,
           body as Parameters<typeof handleRegisterColony>[1],
-          clientIP
+          clientIP,
+          log
         );
         break;
 
       case "LookupColony":
         result = await handleLookupColony(
           env,
-          body as Parameters<typeof handleLookupColony>[1]
+          body as Parameters<typeof handleLookupColony>[1],
+          log
         );
         break;
 
@@ -113,14 +122,16 @@ async function handleConnectRequest(
         result = await handleRegisterAgent(
           env,
           body as Parameters<typeof handleRegisterAgent>[1],
-          clientIP
+          clientIP,
+          log
         );
         break;
 
       case "LookupAgent":
         result = await handleLookupAgent(
           env,
-          body as Parameters<typeof handleLookupAgent>[1]
+          body as Parameters<typeof handleLookupAgent>[1],
+          log
         );
         break;
 
@@ -131,7 +142,8 @@ async function handleConnectRequest(
       case "CreateBootstrapToken":
         result = await handleCreateBootstrapToken(
           env,
-          body as Parameters<typeof handleCreateBootstrapToken>[1]
+          body as Parameters<typeof handleCreateBootstrapToken>[1],
+          log
         );
         break;
 
@@ -143,12 +155,15 @@ async function handleConnectRequest(
         throw new ConnectError(`Unknown RPC: ${rpcName}`, ConnectErrorCode.Unimplemented);
     }
 
+    // Log successful response for debugging.
+    log.debug(`[Discovery] RPC: ${rpcName} SUCCESS, response:`, JSON.stringify(result, bigIntReplacer));
     return createConnectResponse(result);
   } catch (err) {
     if (err instanceof ConnectError) {
+      log.warn(`[Discovery] RPC: ${rpcName} CONNECT_ERROR:`, err.message, `code:`, err.code);
       return createConnectErrorResponse(err);
     }
-    console.error(`Error handling ${rpcName}:`, err);
+    log.error(`[Discovery] RPC: ${rpcName} ERROR:`, err);
     throw err;
   }
 }
@@ -238,20 +253,27 @@ function connectCodeToHTTPStatus(code: number): number {
 /**
  * Handle JWKS endpoint.
  */
-function handleJWKS(env: Env): Response {
-  // TODO: Implement JWKS endpoint with actual keys.
-  // For now, return an empty JWKS.
-  const jwks = {
-    keys: [],
-  };
+async function handleJWKS(env: Env, log: Logger): Promise<Response> {
+  try {
+    const jwks = await getJWKS(env);
 
-  return new Response(JSON.stringify(jwks), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "public, max-age=300",
-    },
-  });
+    return new Response(JSON.stringify(jwks), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=300",
+      },
+    });
+  } catch (err) {
+    log.error("Failed to generate JWKS:", err);
+    return new Response(JSON.stringify({ keys: [] }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "public, max-age=60",
+      },
+    });
+  }
 }
 
 /**

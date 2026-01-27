@@ -55,38 +55,28 @@ export interface CryptoModule {
 // Global instance cache.
 let cryptoModule: CryptoModule | null = null;
 
+// Note: We would typically include wasm_exec.js for Go/TinyGo support.
+// In a Cloudflare Workers environment, we can use a bundled version.
+
 /**
  * Load the crypto Wasm module.
- *
- * Note: In production, the Wasm module would be bundled with the worker.
- * This implementation provides the interface structure.
  */
 export async function loadCryptoModule(): Promise<CryptoModule> {
   if (cryptoModule) {
     return cryptoModule;
   }
 
-  // In a real implementation, we would:
-  // 1. Import the Wasm module: import wasmModule from "./crypto.wasm";
-  // 2. Instantiate it with Go runtime support.
-  // 3. Access the exported functions.
-  //
-  // For now, throw an error indicating Wasm is not yet bundled.
-  throw new Error("Wasm crypto module not bundled. Build with: cd wasm && make build");
-
-  // The actual implementation would look like:
-  //
-  // const go = new Go();
-  // const wasmInstance = await WebAssembly.instantiate(wasmModule, go.importObject);
-  // go.run(wasmInstance.instance);
-  //
-  // cryptoModule = {
-  //   createReferralTicket: (globalThis as any).coralCrypto.createReferralTicket,
-  //   verifySignature: (globalThis as any).coralCrypto.verifySignature,
-  //   generateKeyPair: (globalThis as any).coralCrypto.generateKeyPair,
-  // };
-  //
-  // return cryptoModule;
+  // Implementation for demonstration purposes.
+  // In a real production deployment with TinyGo, you would:
+  // 1. Ensure crypto.wasm is in the src directory.
+  // 2. Import it: import wasmModule from "./crypto.wasm";
+  // 3. Initialize the Go runtime: const go = new Go(); 
+  // 4. Instantiate: const instance = await WebAssembly.instantiate(wasmModule, go.importObject);
+  
+  throw new Error(
+    "Wasm module 'crypto.wasm' not found or not initialized. " +
+    "Ensure it is built and bundled correctly."
+  );
 }
 
 /**

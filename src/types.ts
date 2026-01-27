@@ -10,6 +10,8 @@ export interface Env {
   SERVICE_VERSION: string;
   DEFAULT_TTL_SECONDS: string;
   CLEANUP_INTERVAL_MS: string;
+  USE_WASM_CRYPTO?: string; // Set to "true" to use Wasm implementation.
+  LOG_LEVEL?: string; // "debug", "info", "warn", "error", "silent"
 
   // Secrets (set via wrangler secret).
   DISCOVERY_SIGNING_KEY?: string;
@@ -23,6 +25,7 @@ export interface Config {
   serviceVersion: string;
   defaultTTLSeconds: number;
   cleanupIntervalMs: number;
+  useWasmCrypto: boolean;
 }
 
 /**
@@ -34,6 +37,7 @@ export function parseConfig(env: Env): Config {
     serviceVersion: env.SERVICE_VERSION || "0.0.0",
     defaultTTLSeconds: parseInt(env.DEFAULT_TTL_SECONDS || "300", 10),
     cleanupIntervalMs: parseInt(env.CLEANUP_INTERVAL_MS || "60000", 10),
+    useWasmCrypto: env.USE_WASM_CRYPTO === "true",
   };
 }
 
@@ -91,7 +95,7 @@ export interface PublicEndpointRecord {
   caCert?: string;
   caFingerprint?: {
     algorithm: number;
-    value: Uint8Array;
+    value: string; // Base64 encoded bytes for ProtoJSON compatibility.
   };
   updatedAt?: number;
 }

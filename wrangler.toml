@@ -14,6 +14,7 @@ new_sqlite_classes = ["ColonyRegistry"]
 [vars]
 ENVIRONMENT = "production"
 SERVICE_VERSION = "0.1.0"
+LOG_LEVEL = "info"
 
 # Default TTL in seconds (5 minutes).
 DEFAULT_TTL_SECONDS = "300"
