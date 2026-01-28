@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import type { Env } from "../src/types";
 import worker from "../src/index";
 
 describe("ColonyRegistry", () => {
@@ -24,7 +25,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await worker.fetch(request, env, ctx);
+      const response = await worker.fetch(request, env as Env, ctx);
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(200);
@@ -47,7 +48,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await worker.fetch(request, env, ctx);
+      const response = await worker.fetch(request, env as Env, ctx);
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(400);
@@ -73,7 +74,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx1 = createExecutionContext();
-      const response1 = await worker.fetch(request1, env, ctx1);
+      const response1 = await worker.fetch(request1, env as Env, ctx1);
       await waitOnExecutionContext(ctx1);
       expect(response1.status).toBe(200);
 
@@ -92,7 +93,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx2 = createExecutionContext();
-      const response2 = await worker.fetch(request2, env, ctx2);
+      const response2 = await worker.fetch(request2, env as Env, ctx2);
       await waitOnExecutionContext(ctx2);
 
       expect(response2.status).toBe(409);
@@ -122,7 +123,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx1 = createExecutionContext();
-      await worker.fetch(registerRequest, env, ctx1);
+      await worker.fetch(registerRequest, env as Env, ctx1);
       await waitOnExecutionContext(ctx1);
 
       // Lookup.
@@ -136,7 +137,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx2 = createExecutionContext();
-      const response = await worker.fetch(lookupRequest, env, ctx2);
+      const response = await worker.fetch(lookupRequest, env as Env, ctx2);
       await waitOnExecutionContext(ctx2);
 
       expect(response.status).toBe(200);
@@ -164,7 +165,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await worker.fetch(request, env, ctx);
+      const response = await worker.fetch(request, env as Env, ctx);
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(404);
@@ -185,7 +186,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await worker.fetch(request, env, ctx);
+      const response = await worker.fetch(request, env as Env, ctx);
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(200);
@@ -209,7 +210,7 @@ describe("ColonyRegistry", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await worker.fetch(request, env, ctx);
+      const response = await worker.fetch(request, env as Env, ctx);
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(501);
