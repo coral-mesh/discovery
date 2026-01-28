@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.wrangler/
+
+# Generated files
+gen/
+src/crypto.wasm
+
+# Environment
+.env
+.dev.vars
+
+# Test coverage
+coverage/

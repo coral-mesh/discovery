@@ -1,0 +1,29 @@
+{
+  "name": "coral-discovery-workers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "generate": "buf generate proto/",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "wasm:build": "cd wasm && make build"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "latest",
+    "@connectrpc/connect": "latest"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "latest",
+    "@bufbuild/protoc-gen-es": "latest",
+    "@cloudflare/vitest-pool-workers": "^0.12.7",
+    "@cloudflare/workers-types": "^4.0.0",
+    "@connectrpc/protoc-gen-connect-es": "latest",
+    "typescript": "^5.0.0",
+    "vitest": "~3.2.0",
+    "wrangler": "^4.61.0"
+  }
+}

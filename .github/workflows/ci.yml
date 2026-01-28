@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: Generate proto types
+        run: npm run generate
+      - name: Type check
+        run: npm run typecheck
+      - name: Run tests
+        run: npm test
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: coral-discovery-workers
+      - uses: actions/checkout@v4
+        with:
+          repository: coral-mesh/coral-crypto
+          path: coral-crypto
+      - uses: acifani/setup-tinygo@v2
+        with:
+          tinygo-version: "0.39.0"
+      - name: Build Wasm module
+        working-directory: coral-discovery-workers/wasm
+        run: |
+          go mod tidy
+          tinygo build -o ../src/crypto.wasm -target wasm -no-debug ./main.go
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crypto-wasm
+          path: coral-discovery-workers/src/crypto.wasm
+
+  deploy:
+    needs: [test, build-wasm]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - uses: actions/download-artifact@v4
+        with:
+          name: crypto-wasm
+          path: src/
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: Generate proto types
+        run: npm run generate
+      - name: Deploy to Cloudflare
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}

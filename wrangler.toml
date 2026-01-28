@@ -1,0 +1,23 @@
+name = "coral-discovery"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat_v2"]
+
+[[durable_objects.bindings]]
+name = "COLONY_REGISTRY"
+class_name = "ColonyRegistry"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ColonyRegistry"]
+
+[vars]
+ENVIRONMENT = "production"
+SERVICE_VERSION = "0.1.0"
+LOG_LEVEL = "info"
+
+# Default TTL in seconds (5 minutes).
+DEFAULT_TTL_SECONDS = "300"
+
+# Cleanup interval in milliseconds (60 seconds).
+CLEANUP_INTERVAL_MS = "60000"
