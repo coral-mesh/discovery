@@ -53,4 +53,10 @@ EXPOSE 8080
 # Run wrangler dev
 # --ip 0.0.0.0 to bind to all interfaces
 # --persist-to enables local SQLite persistence for Durable Objects
-CMD ["npx", "wrangler", "dev", "--ip", "0.0.0.0", "--port", "8080", "--persist-to", "/tmp/wrangler-persist"]
+# Use shell form so environment variables are expanded at runtime.
+# --var flags override wrangler.toml [vars] with docker-compose environment values.
+CMD npx wrangler dev --ip 0.0.0.0 --port 8080 --persist-to /tmp/wrangler-persist \
+    --var DEFAULT_TTL_SECONDS:${DEFAULT_TTL_SECONDS:-300} \
+    --var CLEANUP_INTERVAL_MS:${CLEANUP_INTERVAL_MS:-60000} \
+    --var ENVIRONMENT:${ENVIRONMENT:-development} \
+    --var SERVICE_VERSION:${SERVICE_VERSION:-0.1.0}
