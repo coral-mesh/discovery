@@ -36,7 +36,7 @@ jobs:
           path: coral-crypto
       - uses: acifani/setup-tinygo@v2
         with:
-          tinygo-version: "0.32.0"
+          tinygo-version: "0.39.0"
       - name: Build Wasm module
         working-directory: coral-discovery-workers/wasm
         run: |
