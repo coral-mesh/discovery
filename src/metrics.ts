@@ -9,6 +9,8 @@ import type { Env } from "./types";
 export class DiscoveryMetrics implements DurableObject {
   private log: Logger;
   private storage: DurableObjectStorage;
+  private pendingCounts = new Map<string, number>();
+  private flushScheduled = false;
 
   constructor(
     private ctx: DurableObjectState,
@@ -38,6 +40,9 @@ export class DiscoveryMetrics implements DurableObject {
   }
 
   async alarm(): Promise<void> {
+    // Flush any pending counts before cleanup.
+    await this.flushCounts();
+
     // Clean up operation count buckets older than 24 hours.
     const cutoff = Date.now() - 24 * 3600_000;
     const counts = await this.storage.list<number>({ prefix: "count:" });
@@ -99,19 +104,49 @@ export class DiscoveryMetrics implements DurableObject {
       meshId?: string;
     };
 
-    // Increment hourly counter per operation type.
-    const hour = new Date().toISOString().slice(0, 13); // "2026-01-29T10"
+    // Accumulate in memory, flush to storage periodically.
+    const hour = new Date().toISOString().slice(0, 13);
     const key = `count:${body.operation}:${hour}`;
-    const current = await this.storage.get<number>(key) || 0;
-    await this.storage.put(key, current + 1);
+    this.pendingCounts.set(key, (this.pendingCounts.get(key) || 0) + 1);
+
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      // Flush after 10 seconds of batching.
+      this.ctx.waitUntil(this.scheduleFlush());
+    }
+
+    return Response.json({ ok: true });
+  }
+
+  private async scheduleFlush(): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 10_000));
+    await this.flushCounts();
+  }
+
+  private async flushCounts(): Promise<void> {
+    if (this.pendingCounts.size === 0) {
+      this.flushScheduled = false;
+      return;
+    }
+
+    const toFlush = new Map(this.pendingCounts);
+    this.pendingCounts.clear();
+    this.flushScheduled = false;
+
+    // Batch read all keys, then batch write.
+    const keys = [...toFlush.keys()];
+    const existing = await this.storage.get<number>(keys);
+    const updates: Record<string, number> = {};
+    for (const [key, increment] of toFlush) {
+      updates[key] = (existing.get(key) || 0) + increment;
+    }
+    await this.storage.put(updates);
 
     // Ensure cleanup alarm is scheduled.
     const alarm = await this.storage.getAlarm();
     if (alarm === null) {
       await this.storage.setAlarm(Date.now() + 3600_000);
     }
-
-    return Response.json({ ok: true });
   }
 
   /**
