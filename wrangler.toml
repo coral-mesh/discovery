@@ -27,8 +27,8 @@ LOG_LEVEL = "info"
 # Default TTL in seconds (5 minutes).
 DEFAULT_TTL_SECONDS = "300"
 
-# Cleanup interval in milliseconds (60 seconds).
-CLEANUP_INTERVAL_MS = "60000"
+# Cleanup interval in milliseconds (5 minutes).
+CLEANUP_INTERVAL_MS = "300000"
 
 [observability]
 enabled = false

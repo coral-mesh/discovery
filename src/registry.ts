@@ -76,6 +76,8 @@ export class ColonyRegistry implements DurableObject {
   private config: Config;
   private startTime: number;
   private log: Logger;
+  private colonyCache = new Map<string, { data: any; expiresAt: number }>();
+  private agentCache = new Map<string, { data: any; expiresAt: number }>();
 
   constructor(
     private ctx: DurableObjectState,
@@ -144,20 +146,17 @@ export class ColonyRegistry implements DurableObject {
   async alarm(): Promise<void> {
     const now = Date.now();
 
-    // Count before cleanup for logging.
-    const coloniesBefore = this.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM colonies WHERE expires_at < ?`, now)
-      .toArray()[0]?.count || 0;
-    const agentsBefore = this.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM agents WHERE expires_at < ?`, now)
-      .toArray()[0]?.count || 0;
-
-    // Batch cleanup expired entries.
+    // Delete expired entries and get counts via changes().
     this.sql.exec(`DELETE FROM colonies WHERE expires_at < ?`, now);
+    const coloniesDeleted = this.sql.exec<{ c: number }>(`SELECT changes() as c`).toArray()[0]?.c || 0;
     this.sql.exec(`DELETE FROM agents WHERE expires_at < ?`, now);
+    const agentsDeleted = this.sql.exec<{ c: number }>(`SELECT changes() as c`).toArray()[0]?.c || 0;
 
-    if (coloniesBefore > 0 || agentsBefore > 0) {
-      this.log.info(`[Registry] Cleanup: expired colonies=${coloniesBefore}, expired agents=${agentsBefore}`);
+    if (coloniesDeleted > 0 || agentsDeleted > 0) {
+      this.log.info(`[Registry] Cleanup: expired colonies=${coloniesDeleted}, expired agents=${agentsDeleted}`);
+      // Invalidate caches on cleanup.
+      this.colonyCache.clear();
+      this.agentCache.clear();
     }
 
     // Log current counts.
@@ -184,8 +183,8 @@ export class ColonyRegistry implements DurableObject {
             body: JSON.stringify({
               colonies: activeColonies,
               agents: activeAgents,
-              expiredColonies: coloniesBefore,
-              expiredAgents: agentsBefore,
+              expiredColonies: coloniesDeleted,
+              expiredAgents: agentsDeleted,
             }),
           })
         );
@@ -239,14 +238,15 @@ export class ColonyRegistry implements DurableObject {
     const expiresAt = now + this.config.defaultTTLSeconds * 1000;
 
     // Check for split-brain (existing registration with different pubkey).
-    const existing = this.sql
+    // This uses the PRIMARY KEY index on mesh_id, so it's a single-row lookup.
+    const existingPubkey = this.sql
       .exec<{ pubkey: string }>(
-        `SELECT pubkey FROM colonies WHERE mesh_id = ?`,
+        `SELECT pubkey FROM colonies WHERE mesh_id = ? LIMIT 1`,
         body.meshId
       )
       .toArray();
 
-    if (existing.length > 0 && existing[0].pubkey !== body.pubkey) {
+    if (existingPubkey.length > 0 && existingPubkey[0].pubkey !== body.pubkey) {
       throw new ConnectError(
         `mesh_id ${body.meshId} already registered with different pubkey`,
         ConnectErrorCode.AlreadyExists
@@ -263,60 +263,36 @@ export class ColonyRegistry implements DurableObject {
       };
     }
 
-    // Upsert colony.
-    if (existing.length > 0) {
-      this.sql.exec(
-        `UPDATE colonies SET
-          pubkey = ?,
-          endpoints = ?,
-          mesh_ipv4 = ?,
-          mesh_ipv6 = ?,
-          connect_port = ?,
-          public_port = ?,
-          metadata = ?,
-          observed_endpoint = ?,
-          public_endpoint = ?,
-          updated_at = ?,
-          expires_at = ?
-        WHERE mesh_id = ?`,
-        body.pubkey,
-        JSON.stringify(body.endpoints || []),
-        body.meshIpv4 || null,
-        body.meshIpv6 || null,
-        body.connectPort || null,
-        body.publicPort || null,
-        body.metadata ? JSON.stringify(body.metadata) : null,
-        observedEndpoint ? JSON.stringify(observedEndpoint) : null,
-        body.publicEndpoint ? JSON.stringify(body.publicEndpoint) : null,
-        now,
-        expiresAt,
-        body.meshId
-      );
-    } else {
-      this.sql.exec(
-        `INSERT INTO colonies (
-          mesh_id, pubkey, endpoints, mesh_ipv4, mesh_ipv6,
-          connect_port, public_port, metadata, observed_endpoint,
-          public_endpoint, nat_hint, created_at, updated_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        body.meshId,
-        body.pubkey,
-        JSON.stringify(body.endpoints || []),
-        body.meshIpv4 || null,
-        body.meshIpv6 || null,
-        body.connectPort || null,
-        body.publicPort || null,
-        body.metadata ? JSON.stringify(body.metadata) : null,
-        observedEndpoint ? JSON.stringify(observedEndpoint) : null,
-        body.publicEndpoint ? JSON.stringify(body.publicEndpoint) : null,
-        0, // nat_hint.
-        now,
-        now,
-        expiresAt
-      );
-    }
+    // Upsert colony using INSERT OR REPLACE to avoid extra SELECT.
+    this.sql.exec(
+      `INSERT OR REPLACE INTO colonies (
+        mesh_id, pubkey, endpoints, mesh_ipv4, mesh_ipv6,
+        connect_port, public_port, metadata, observed_endpoint,
+        public_endpoint, nat_hint, created_at, updated_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        COALESCE((SELECT created_at FROM colonies WHERE mesh_id = ?), ?),
+        ?, ?)`,
+      body.meshId,
+      body.pubkey,
+      JSON.stringify(body.endpoints || []),
+      body.meshIpv4 || null,
+      body.meshIpv6 || null,
+      body.connectPort || null,
+      body.publicPort || null,
+      body.metadata ? JSON.stringify(body.metadata) : null,
+      observedEndpoint ? JSON.stringify(observedEndpoint) : null,
+      body.publicEndpoint ? JSON.stringify(body.publicEndpoint) : null,
+      0, // nat_hint
+      body.meshId, // for COALESCE subquery
+      now, // fallback created_at
+      now, // updated_at
+      expiresAt
+    );
 
-    this.log.info(`[Registry] RegisterColony SUCCESS: meshId=${body.meshId}, isNew=${existing.length === 0}, expiresAt=${new Date(expiresAt).toISOString()}`);
+    // Update cache.
+    this.colonyCache.delete(body.meshId);
+
+    this.log.info(`[Registry] RegisterColony SUCCESS: meshId=${body.meshId}, expiresAt=${new Date(expiresAt).toISOString()}`);
 
     return Response.json({
       success: true,
@@ -340,11 +316,12 @@ export class ColonyRegistry implements DurableObject {
 
     const now = Date.now();
 
-    // First, log all colonies in the database for debugging.
-    const allColonies = this.sql
-      .exec<{ mesh_id: string; expires_at: number }>(`SELECT mesh_id, expires_at FROM colonies`)
-      .toArray();
-    this.log.debug(`[Registry] All colonies in DB:`, JSON.stringify(allColonies), `current time: ${now}`);
+    // Check in-memory cache first.
+    const cached = this.colonyCache.get(body.meshId);
+    if (cached && cached.expiresAt >= now) {
+      this.log.info(`[Registry] LookupColony: meshId=${body.meshId}, found=true (cached)`);
+      return Response.json(cached.data);
+    }
 
     const rows = this.sql
       .exec<{
@@ -360,8 +337,9 @@ export class ColonyRegistry implements DurableObject {
         public_endpoint: string | null;
         nat_hint: number;
         updated_at: number;
+        expires_at: number;
       }>(
-        `SELECT * FROM colonies WHERE mesh_id = ? AND expires_at >= ?`,
+        `SELECT mesh_id, pubkey, endpoints, mesh_ipv4, mesh_ipv6, connect_port, public_port, metadata, observed_endpoint, public_endpoint, nat_hint, updated_at, expires_at FROM colonies WHERE mesh_id = ? AND expires_at >= ? LIMIT 1`,
         body.meshId,
         now
       )
@@ -394,7 +372,8 @@ export class ColonyRegistry implements DurableObject {
       publicEndpoint: row.public_endpoint ? JSON.parse(row.public_endpoint) : undefined,
     };
 
-    this.log.debug(`[Registry] LookupColony SUCCESS for ${body.meshId}: pubkey=${row.pubkey?.substring(0, 20)}..., endpoints=${row.endpoints}, publicPort=${row.public_port}`);
+    // Cache the result.
+    this.colonyCache.set(body.meshId, { data: response, expiresAt: row.expires_at });
 
     return Response.json(response);
   }
@@ -460,6 +439,9 @@ export class ColonyRegistry implements DurableObject {
       expiresAt
     );
 
+    // Invalidate cache.
+    this.agentCache.delete(body.agentId);
+
     this.log.info(`[Registry] RegisterAgent SUCCESS: agentId=${body.agentId}, meshId=${body.meshId}, expiresAt=${new Date(expiresAt).toISOString()}`);
 
     return Response.json({
@@ -483,6 +465,14 @@ export class ColonyRegistry implements DurableObject {
     }
 
     const now = Date.now();
+
+    // Check in-memory cache first.
+    const cached = this.agentCache.get(body.agentId);
+    if (cached && cached.expiresAt >= now) {
+      this.log.info(`[Registry] LookupAgent: agentId=${body.agentId}, found=true (cached)`);
+      return Response.json(cached.data);
+    }
+
     const rows = this.sql
       .exec<{
         agent_id: string;
@@ -492,8 +482,9 @@ export class ColonyRegistry implements DurableObject {
         observed_endpoint: string | null;
         metadata: string | null;
         updated_at: number;
+        expires_at: number;
       }>(
-        `SELECT * FROM agents WHERE agent_id = ? AND expires_at >= ?`,
+        `SELECT agent_id, mesh_id, pubkey, endpoints, observed_endpoint, metadata, updated_at, expires_at FROM agents WHERE agent_id = ? AND expires_at >= ? LIMIT 1`,
         body.agentId,
         now
       )
@@ -509,7 +500,7 @@ export class ColonyRegistry implements DurableObject {
       observedEndpoints.push(JSON.parse(row.observed_endpoint));
     }
 
-    return Response.json({
+    const response = {
       agentId: row.agent_id,
       meshId: row.mesh_id,
       pubkey: row.pubkey,
@@ -517,7 +508,12 @@ export class ColonyRegistry implements DurableObject {
       observedEndpoints,
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       lastSeen: Math.floor(row.updated_at / 1000),
-    });
+    };
+
+    // Cache the result.
+    this.agentCache.set(body.agentId, { data: response, expiresAt: row.expires_at });
+
+    return Response.json(response);
   }
 
   /**
