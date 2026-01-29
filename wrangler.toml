@@ -7,13 +7,21 @@ compatibility_flags = ["nodejs_compat_v2"]
 name = "COLONY_REGISTRY"
 class_name = "ColonyRegistry"
 
+[[durable_objects.bindings]]
+name = "DISCOVERY_METRICS"
+class_name = "DiscoveryMetrics"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ColonyRegistry"]
 
+[[migrations]]
+tag = "v2"
+new_classes = ["DiscoveryMetrics"]
+
 [vars]
 ENVIRONMENT = "production"
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.1.1"
 LOG_LEVEL = "info"
 
 # Default TTL in seconds (5 minutes).

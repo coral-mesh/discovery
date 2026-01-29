@@ -14,9 +14,10 @@ import { handleHealth } from "./handlers/health";
 import { handleCreateBootstrapToken } from "./handlers/bootstrap";
 import { getJWKS } from "./crypto";
 import { createLogger, parseLogLevel, type Logger } from "./logger";
+import { DiscoveryMetrics } from "./metrics";
 
-// Re-export Durable Object class.
-export { ColonyRegistry };
+// Re-export Durable Object classes.
+export { ColonyRegistry, DiscoveryMetrics };
 
 /**
  * Main worker handler.
@@ -35,12 +36,17 @@ export default {
       // Handle Connect protocol routes.
       // Connect uses POST with paths like /coral.discovery.v1.DiscoveryService/RegisterColony
       if (method === "POST" && path.startsWith("/coral.discovery.v1.DiscoveryService/")) {
-        return await handleConnectRequest(request, env, path, clientIP, log);
+        return await handleConnectRequest(request, env, ctx, path, clientIP, log);
       }
 
       // Handle JWKS endpoint for token verification.
       if (method === "GET" && path === "/.well-known/jwks.json") {
         return await handleJWKS(env, log);
+      }
+
+      // Handle stats endpoint.
+      if (method === "GET" && path === "/stats") {
+        return await handleStats(env);
       }
 
       // Handle simple health check.
@@ -71,6 +77,7 @@ export default {
 async function handleConnectRequest(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   path: string,
   clientIP: string | undefined,
   log: Logger
@@ -93,8 +100,9 @@ async function handleConnectRequest(
     body = await request.json();
   }
 
-  // Log incoming request for debugging.
-  log.debug(`[Discovery] RPC: ${rpcName}, clientIP: ${clientIP}, body:`, JSON.stringify(body));
+  // Log incoming request.
+  const meshId = (body as Record<string, unknown>)?.meshId || (body as Record<string, unknown>)?.mesh_id || "unknown";
+  log.info(`[Discovery] RPC: ${rpcName}, meshId: ${meshId}, clientIP: ${clientIP}`);
 
   // Route to appropriate handler.
   try {
@@ -155,8 +163,8 @@ async function handleConnectRequest(
         throw new ConnectError(`Unknown RPC: ${rpcName}`, ConnectErrorCode.Unimplemented);
     }
 
-    // Log successful response for debugging.
-    log.debug(`[Discovery] RPC: ${rpcName} SUCCESS, response:`, JSON.stringify(result, bigIntReplacer));
+    log.info(`[Discovery] RPC: ${rpcName} SUCCESS, meshId: ${meshId}`);
+    trackOperation(env, ctx, rpcName, String(meshId));
     return createConnectResponse(result);
   } catch (err) {
     if (err instanceof ConnectError) {
@@ -274,6 +282,41 @@ async function handleJWKS(env: Env, log: Logger): Promise<Response> {
       },
     });
   }
+}
+
+/**
+ * Forward stats request to the DiscoveryMetrics Durable Object.
+ */
+async function handleStats(env: Env): Promise<Response> {
+  const metricsId = env.DISCOVERY_METRICS.idFromName("global");
+  const metrics = env.DISCOVERY_METRICS.get(metricsId);
+  const response = await metrics.fetch(new Request("http://internal/stats"));
+  const data = await response.json();
+  return Response.json(data);
+}
+
+/**
+ * Track an operation in the metrics DO (fire-and-forget).
+ */
+function trackOperation(env: Env, ctx: ExecutionContext, operation: string, meshId?: string): void {
+  if (!env.DISCOVERY_METRICS) return;
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const metricsId = env.DISCOVERY_METRICS.idFromName("global");
+        const metrics = env.DISCOVERY_METRICS.get(metricsId);
+        await metrics.fetch(
+          new Request("http://internal/track", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ operation, meshId }),
+          })
+        );
+      } catch {
+        // Best-effort, don't fail the request.
+      }
+    })()
+  );
 }
 
 /**

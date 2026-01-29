@@ -144,9 +144,55 @@ export class ColonyRegistry implements DurableObject {
   async alarm(): Promise<void> {
     const now = Date.now();
 
+    // Count before cleanup for logging.
+    const coloniesBefore = this.sql
+      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM colonies WHERE expires_at < ?`, now)
+      .toArray()[0]?.count || 0;
+    const agentsBefore = this.sql
+      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM agents WHERE expires_at < ?`, now)
+      .toArray()[0]?.count || 0;
+
     // Batch cleanup expired entries.
     this.sql.exec(`DELETE FROM colonies WHERE expires_at < ?`, now);
     this.sql.exec(`DELETE FROM agents WHERE expires_at < ?`, now);
+
+    if (coloniesBefore > 0 || agentsBefore > 0) {
+      this.log.info(`[Registry] Cleanup: expired colonies=${coloniesBefore}, expired agents=${agentsBefore}`);
+    }
+
+    // Log current counts.
+    const activeColonies = this.sql
+      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM colonies`)
+      .toArray()[0]?.count || 0;
+    const activeAgents = this.sql
+      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM agents`)
+      .toArray()[0]?.count || 0;
+
+    if (activeColonies > 0 || activeAgents > 0) {
+      this.log.info(`[Registry] State: activeColonies=${activeColonies}, activeAgents=${activeAgents}`);
+    }
+
+    // Emit metrics to the global metrics DO.
+    try {
+      if (this.env.DISCOVERY_METRICS) {
+        const metricsId = this.env.DISCOVERY_METRICS.idFromName("global");
+        const metrics = this.env.DISCOVERY_METRICS.get(metricsId);
+        await metrics.fetch(
+          new Request("http://internal/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-DO-Id": this.ctx.id.toString() },
+            body: JSON.stringify({
+              colonies: activeColonies,
+              agents: activeAgents,
+              expiredColonies: coloniesBefore,
+              expiredAgents: agentsBefore,
+            }),
+          })
+        );
+      }
+    } catch (err) {
+      this.log.warn("[Registry] Failed to report metrics:", err);
+    }
 
     // Schedule next cleanup.
     await this.ctx.storage.setAlarm(Date.now() + this.config.cleanupIntervalMs);
@@ -176,7 +222,7 @@ export class ColonyRegistry implements DurableObject {
       observedIP?: string;
     };
 
-    this.log.debug(`[Registry] RegisterColony called with meshId: ${body.meshId}, pubkey: ${body.pubkey?.substring(0, 20)}..., endpoints: ${JSON.stringify(body.endpoints)}, publicPort: ${body.publicPort}`);
+    this.log.info(`[Registry] RegisterColony: meshId=${body.meshId}, endpoints=${body.endpoints?.length || 0}, publicPort=${body.publicPort}`);
 
     // Validate required fields.
     if (!body.meshId) {
@@ -270,7 +316,7 @@ export class ColonyRegistry implements DurableObject {
       );
     }
 
-    this.log.debug(`[Registry] RegisterColony SUCCESS for meshId: ${body.meshId}, expiresAt: ${expiresAt}`);
+    this.log.info(`[Registry] RegisterColony SUCCESS: meshId=${body.meshId}, isNew=${existing.length === 0}, expiresAt=${new Date(expiresAt).toISOString()}`);
 
     return Response.json({
       success: true,
@@ -286,7 +332,7 @@ export class ColonyRegistry implements DurableObject {
   private async handleLookupColony(request: Request): Promise<Response> {
     const body = await request.json() as { meshId: string };
 
-    this.log.debug(`[Registry] LookupColony called with meshId: ${body.meshId}`);
+    this.log.info(`[Registry] LookupColony: meshId=${body.meshId}`);
 
     if (!body.meshId) {
       throw new ConnectError("mesh_id is required", ConnectErrorCode.InvalidArgument);
@@ -321,7 +367,7 @@ export class ColonyRegistry implements DurableObject {
       )
       .toArray();
 
-    this.log.debug(`[Registry] LookupColony query result for ${body.meshId}: ${rows.length} rows found`);
+    this.log.info(`[Registry] LookupColony: meshId=${body.meshId}, found=${rows.length > 0}`);
 
     if (rows.length === 0) {
       throw new ConnectError(`colony ${body.meshId} not found`, ConnectErrorCode.NotFound);
@@ -367,7 +413,7 @@ export class ColonyRegistry implements DurableObject {
       observedIP?: string;
     };
 
-    this.log.debug(`[Registry] RegisterAgent called with agentId: ${body.agentId}, meshId: ${body.meshId}, pubkey: ${body.pubkey?.substring(0, 20)}..., endpoints: ${JSON.stringify(body.endpoints)}`);
+    this.log.info(`[Registry] RegisterAgent: agentId=${body.agentId}, meshId=${body.meshId}, endpoints=${body.endpoints?.length || 0}`);
 
     // Validate required fields.
     if (!body.agentId) {
@@ -414,7 +460,7 @@ export class ColonyRegistry implements DurableObject {
       expiresAt
     );
 
-    this.log.debug(`[Registry] RegisterAgent SUCCESS for agentId: ${body.agentId}, meshId: ${body.meshId}, expiresAt: ${expiresAt}`);
+    this.log.info(`[Registry] RegisterAgent SUCCESS: agentId=${body.agentId}, meshId=${body.meshId}, expiresAt=${new Date(expiresAt).toISOString()}`);
 
     return Response.json({
       success: true,
@@ -430,7 +476,7 @@ export class ColonyRegistry implements DurableObject {
   private async handleLookupAgent(request: Request): Promise<Response> {
     const body = await request.json() as { agentId: string };
 
-    this.log.debug(`[Registry] LookupAgent called with agentId: ${body.agentId}`);
+    this.log.info(`[Registry] LookupAgent: agentId=${body.agentId}`);
 
     if (!body.agentId) {
       throw new ConnectError("agent_id is required", ConnectErrorCode.InvalidArgument);
