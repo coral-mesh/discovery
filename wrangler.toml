@@ -17,7 +17,7 @@ new_sqlite_classes = ["ColonyRegistry"]
 
 [[migrations]]
 tag = "v2"
-new_classes = ["DiscoveryMetrics"]
+new_sqlite_classes = ["DiscoveryMetrics"]
 
 [vars]
 ENVIRONMENT = "production"
