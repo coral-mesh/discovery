@@ -159,18 +159,6 @@ export class ColonyRegistry implements DurableObject {
       this.agentCache.clear();
     }
 
-    // Log current counts.
-    const activeColonies = this.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM colonies`)
-      .toArray()[0]?.count || 0;
-    const activeAgents = this.sql
-      .exec<{ count: number }>(`SELECT COUNT(*) as count FROM agents`)
-      .toArray()[0]?.count || 0;
-
-    if (activeColonies > 0 || activeAgents > 0) {
-      this.log.info(`[Registry] State: activeColonies=${activeColonies}, activeAgents=${activeAgents}`);
-    }
-
     // Emit metrics to the global metrics DO.
     try {
       if (this.env.DISCOVERY_METRICS) {
@@ -181,8 +169,6 @@ export class ColonyRegistry implements DurableObject {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-DO-Id": this.ctx.id.toString() },
             body: JSON.stringify({
-              colonies: activeColonies,
-              agents: activeAgents,
               expiredColonies: coloniesDeleted,
               expiredAgents: agentsDeleted,
             }),

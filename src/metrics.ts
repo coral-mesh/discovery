@@ -1,18 +1,6 @@
 import { createLogger, parseLogLevel, type Logger } from "./logger";
 import type { Env } from "./types";
 
-interface MeshSnapshot {
-  colonies: number;
-  agents: number;
-  updatedAt: number;
-}
-
-interface OperationEntry {
-  operation: string;
-  meshId?: string;
-  timestamp: number;
-}
-
 /**
  * DiscoveryMetrics Durable Object.
  * Singleton that aggregates metrics from all ColonyRegistry DOs.
@@ -50,12 +38,14 @@ export class DiscoveryMetrics implements DurableObject {
   }
 
   async alarm(): Promise<void> {
-    // Clean up operation logs older than 24 hours.
+    // Clean up operation count buckets older than 24 hours.
     const cutoff = Date.now() - 24 * 3600_000;
-    const ops = await this.storage.list<OperationEntry>({ prefix: "op:" });
+    const counts = await this.storage.list<number>({ prefix: "count:" });
     const toDelete: string[] = [];
-    for (const [key, entry] of ops) {
-      if (entry.timestamp < cutoff) {
+    for (const [key] of counts) {
+      // key format: "count:RegisterColony:2026-01-29T10"
+      const hour = key.split(":").pop()!;
+      if (new Date(hour + ":00:00Z").getTime() < cutoff) {
         toDelete.push(key);
       }
     }
@@ -63,12 +53,12 @@ export class DiscoveryMetrics implements DurableObject {
       await this.storage.delete(toDelete);
     }
 
-    // Clean up stale mesh snapshots (no report for 10 minutes).
+    // Clean up stale cleanup snapshots (no report for 10 minutes).
     const staleThreshold = Date.now() - 10 * 60_000;
-    const snapshots = await this.storage.list<MeshSnapshot>({ prefix: "mesh:" });
+    const cleanups = await this.storage.list<{ updatedAt: number }>({ prefix: "cleanup:" });
     const staleKeys: string[] = [];
-    for (const [key, snap] of snapshots) {
-      if (snap.updatedAt < staleThreshold) {
+    for (const [key, entry] of cleanups) {
+      if (entry.updatedAt < staleThreshold) {
         staleKeys.push(key);
       }
     }
@@ -84,27 +74,18 @@ export class DiscoveryMetrics implements DurableObject {
    */
   private async handleReport(request: Request): Promise<Response> {
     const body = await request.json() as {
-      colonies: number;
-      agents: number;
       expiredColonies: number;
       expiredAgents: number;
     };
 
     const doId = request.headers.get("X-DO-Id") || "unknown";
 
-    const snapshot: MeshSnapshot = {
-      colonies: body.colonies,
-      agents: body.agents,
+    // Store cleanup stats for this DO.
+    await this.storage.put(`cleanup:${doId}`, {
+      expiredColonies: body.expiredColonies,
+      expiredAgents: body.expiredAgents,
       updatedAt: Date.now(),
-    };
-
-    await this.storage.put(`mesh:${doId}`, snapshot);
-
-    // Ensure cleanup alarm is scheduled.
-    const alarm = await this.storage.getAlarm();
-    if (alarm === null) {
-      await this.storage.setAlarm(Date.now() + 3600_000);
-    }
+    });
 
     return Response.json({ ok: true });
   }
@@ -118,15 +99,17 @@ export class DiscoveryMetrics implements DurableObject {
       meshId?: string;
     };
 
-    const entry: OperationEntry = {
-      operation: body.operation,
-      meshId: body.meshId,
-      timestamp: Date.now(),
-    };
+    // Increment hourly counter per operation type.
+    const hour = new Date().toISOString().slice(0, 13); // "2026-01-29T10"
+    const key = `count:${body.operation}:${hour}`;
+    const current = await this.storage.get<number>(key) || 0;
+    await this.storage.put(key, current + 1);
 
-    // Use a unique key per operation.
-    const key = `op:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await this.storage.put(key, entry);
+    // Ensure cleanup alarm is scheduled.
+    const alarm = await this.storage.getAlarm();
+    if (alarm === null) {
+      await this.storage.setAlarm(Date.now() + 3600_000);
+    }
 
     return Response.json({ ok: true });
   }
@@ -137,36 +120,22 @@ export class DiscoveryMetrics implements DurableObject {
   private async handleStats(): Promise<Response> {
     const now = Date.now();
     const oneHourAgo = now - 3600_000;
-    const staleThreshold = now - 5 * 60_000;
 
-    // Aggregate from recent snapshots.
-    const snapshots = await this.storage.list<MeshSnapshot>({ prefix: "mesh:" });
-    let totalColonies = 0;
-    let totalAgents = 0;
-    let activeDOs = 0;
-
-    for (const [, snap] of snapshots) {
-      if (snap.updatedAt >= staleThreshold) {
-        totalColonies += snap.colonies;
-        totalAgents += snap.agents;
-        activeDOs++;
-      }
-    }
-
-    // Count operations in last hour.
-    const ops = await this.storage.list<OperationEntry>({ prefix: "op:" });
+    // Count operations in last hour from hourly buckets.
+    const counts = await this.storage.list<number>({ prefix: "count:" });
     const operationCounts: Record<string, number> = {};
 
-    for (const [, entry] of ops) {
-      if (entry.timestamp >= oneHourAgo) {
-        operationCounts[entry.operation] = (operationCounts[entry.operation] || 0) + 1;
+    for (const [key, count] of counts) {
+      // key format: "count:RegisterColony:2026-01-29T10"
+      const parts = key.split(":");
+      const hour = parts.pop()!;
+      const operation = parts.slice(1).join(":");
+      if (new Date(hour + ":00:00Z").getTime() >= oneHourAgo) {
+        operationCounts[operation] = (operationCounts[operation] || 0) + count;
       }
     }
 
     return Response.json({
-      activeColonies: totalColonies,
-      activeAgents: totalAgents,
-      activeDurableObjects: activeDOs,
       operationsLastHour: operationCounts,
       timestamp: new Date(now).toISOString(),
     });
