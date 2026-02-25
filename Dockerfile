@@ -24,7 +24,7 @@ RUN go mod tidy
 RUN tinygo build -o crypto.wasm -target wasm -no-debug ./main.go
 
 # Stage 2: Runtime (Node.js)
-FROM node:20-slim
+FROM node:20.20.0-trixie-slim
 
 # Install curl for healthchecks
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
