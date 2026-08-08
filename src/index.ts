@@ -12,12 +12,18 @@ import { handleRegisterColony, handleRegisterAgent } from "./handlers/register";
 import { handleLookupColony, handleLookupAgent } from "./handlers/lookup";
 import { handleHealth } from "./handlers/health";
 import { handleCreateBootstrapToken } from "./handlers/bootstrap";
+import {
+  handlePublishBootstrapRendezvous,
+  handlePollBootstrapRendezvous,
+  handleAckBootstrapRendezvous,
+} from "./handlers/rendezvous";
 import { getJWKS } from "./crypto";
 import { createLogger, parseLogLevel, type Logger } from "./logger";
 import { DiscoveryMetrics } from "./metrics";
+import { ProbeQuota } from "./quota";
 
 // Re-export Durable Object classes.
-export { ColonyRegistry, DiscoveryMetrics };
+export { ColonyRegistry, DiscoveryMetrics, ProbeQuota };
 
 /**
  * Main worker handler.
@@ -155,6 +161,31 @@ async function handleConnectRequest(
         );
         break;
 
+      case "PublishBootstrapRendezvous":
+        result = await handlePublishBootstrapRendezvous(
+          env,
+          body as Parameters<typeof handlePublishBootstrapRendezvous>[1],
+          clientIP,
+          log
+        );
+        break;
+
+      case "PollBootstrapRendezvous":
+        result = await handlePollBootstrapRendezvous(
+          env,
+          body as Parameters<typeof handlePollBootstrapRendezvous>[1],
+          log
+        );
+        break;
+
+      case "AckBootstrapRendezvous":
+        result = await handleAckBootstrapRendezvous(
+          env,
+          body as Parameters<typeof handleAckBootstrapRendezvous>[1],
+          log
+        );
+        break;
+
       case "RequestRelay":
       case "ReleaseRelay":
         throw new ConnectError("Relay not supported in Workers", ConnectErrorCode.Unimplemented);
@@ -192,17 +223,17 @@ function createConnectResponse(data: unknown): Response {
  * Create a Connect protocol error response.
  */
 function createConnectErrorResponse(err: ConnectError): Response {
+  const status = connectCodeToHTTPStatus(err.code);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (status === 429 && err.retryAfterSeconds) {
+    headers["Retry-After"] = String(err.retryAfterSeconds);
+  }
   return new Response(
     JSON.stringify({
       code: connectCodeToString(err.code),
       message: err.message,
     }),
-    {
-      status: connectCodeToHTTPStatus(err.code),
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }
+    { status, headers }
   );
 }
 

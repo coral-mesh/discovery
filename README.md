@@ -28,6 +28,9 @@ Connect protocol (unary, POST, JSON).
 | `RegisterAgent`        | Register or update an agent              |
 | `LookupAgent`          | Look up an agent by ID and mesh ID       |
 | `CreateBootstrapToken` | Issue a signed Ed25519 JWT for bootstrap |
+| `PublishBootstrapRendezvous` | Publish a PSK-encrypted rendezvous record (RFD 108) |
+| `PollBootstrapRendezvous`    | Long-poll for a pending rendezvous record (RFD 108) |
+| `AckBootstrapRendezvous`     | Retire a fulfilled rendezvous record (RFD 108)      |
 | `Health`               | Service health check                     |
 
 Additional routes:

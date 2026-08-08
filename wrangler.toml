@@ -11,6 +11,10 @@ class_name = "ColonyRegistry"
 name = "DISCOVERY_METRICS"
 class_name = "DiscoveryMetrics"
 
+[[durable_objects.bindings]]
+name = "PROBE_QUOTA"
+class_name = "ProbeQuota"
+
 [[migrations]]
 tag = "v3"
 new_sqlite_classes = ["ColonyRegistry"]
@@ -18,6 +22,11 @@ new_sqlite_classes = ["ColonyRegistry"]
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["DiscoveryMetrics"]
+
+# ProbeQuota (RFD 108) holds only in-memory state, no SQLite storage needed.
+[[migrations]]
+tag = "v5"
+new_classes = ["ProbeQuota"]
 
 [vars]
 ENVIRONMENT = "production"

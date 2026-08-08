@@ -31,6 +31,15 @@ service DiscoveryService {
 
   // Create a single-use bootstrap token for agent certificate issuance (RFD 047/049).
   rpc CreateBootstrapToken(CreateBootstrapTokenRequest) returns (CreateBootstrapTokenResponse);
+
+  // Publish a PSK-encrypted rendezvous record so a peer can locate this side (RFD 108).
+  rpc PublishBootstrapRendezvous(PublishBootstrapRendezvousRequest) returns (PublishBootstrapRendezvousResponse);
+
+  // Poll for pending rendezvous records published for this mesh_id (RFD 108).
+  rpc PollBootstrapRendezvous(PollBootstrapRendezvousRequest) returns (PollBootstrapRendezvousResponse);
+
+  // Delete a rendezvous record after successful fulfillment (RFD 108).
+  rpc AckBootstrapRendezvous(AckBootstrapRendezvousRequest) returns (AckBootstrapRendezvousResponse);
 }
 
 // Registration request
@@ -278,6 +287,11 @@ message RegisterAgentResponse {
 message LookupAgentRequest {
   // Agent ID to look up
   string agent_id = 1;
+
+  // Mesh ID hint for routing (required for Workers implementation).
+  // The original Go server maintains a global index, but partitioned
+  // implementations need this to route to the correct shard.
+  string mesh_id = 2;
 }
 
 // LookupAgentResponse returns agent information.
@@ -370,4 +384,109 @@ message CreateBootstrapTokenResponse {
 
   // Token expiration timestamp (Unix seconds).
   int64 expires_at = 2;
+}
+
+// PSK-encrypted rendezvous messages (RFD 108 - NAT-Traversing Agent Bootstrap).
+
+// PublishBootstrapRendezvousRequest publishes (or republishes) an opaque,
+// PSK-encrypted rendezvous record for a mesh_id. Discovery never sees the
+// plaintext.
+message PublishBootstrapRendezvousRequest {
+  // Mesh/Colony ID this record is for.
+  string mesh_id = 1;
+
+  // AES-256-GCM ciphertext of the rendezvous payload. Opaque to Discovery.
+  bytes ciphertext = 2;
+
+  // AES-256-GCM nonce (12 bytes) used for THIS Seal() call. MUST be freshly
+  // random every time this RPC is called (including every republish of the
+  // same session) — never reuse a GCM nonce with the same derived key
+  // across different Seal() calls.
+  bytes gcm_nonce = 3;
+
+  // Requested TTL in seconds (server may cap, e.g. max 90s).
+  int32 ttl_seconds = 4;
+
+  // Plaintext dial target (ip:port) Discovery may TCP-probe before accepting
+  // the record, but only if verify_reachability=true. Ignored (may be left
+  // unset) when verify_reachability=false.
+  string probe_endpoint = 5;
+
+  // Optional: the record_id returned by a prior PublishBootstrapRendezvous
+  // call for this same bootstrap attempt. When set, Discovery UPSERTs the
+  // existing row instead of inserting a new one. Left empty on the first
+  // publish of a session. When set, write_token below MUST match the hash
+  // stored for this record_id, or the request is rejected (PERMISSION_DENIED).
+  string record_id = 6;
+
+  // Capability required to mutate this record. On first publish (record_id
+  // unset), the caller generates this client-side (crypto/rand, 32 bytes).
+  // Discovery persists only SHA-256(write_token), never the raw value, and
+  // never returns it in any response.
+  bytes write_token = 7;
+
+  // Opt-in: request Discovery to synchronously TCP-probe probe_endpoint
+  // before accepting the record. Defaults to false.
+  bool verify_reachability = 8;
+}
+
+// PublishBootstrapRendezvousResponse acknowledges a rendezvous publish.
+message PublishBootstrapRendezvousResponse {
+  bool success = 1;
+  google.protobuf.Timestamp expires_at = 2;
+
+  // Only meaningful when the request set verify_reachability=true. Set when
+  // success=false and the cause was a failed reachability probe.
+  bool probe_failed = 3;
+
+  // Server-assigned ID (ULID) on first publish. Stable across the whole
+  // bootstrap attempt.
+  string record_id = 4;
+}
+
+// PollBootstrapRendezvousRequest long-polls for rendezvous records.
+message PollBootstrapRendezvousRequest {
+  string mesh_id = 1;
+
+  // Long-poll wait, in seconds. Server caps this (e.g. max 25s) independent
+  // of what the caller requests. Does NOT wait if a record already exists —
+  // an existing record is always returned immediately.
+  int32 wait_seconds = 2;
+}
+
+// PollBootstrapRendezvousResponse returns pending rendezvous records.
+message PollBootstrapRendezvousResponse {
+  repeated BootstrapRendezvousRecord records = 1;
+
+  // True if this response was a timeout (empty records) rather than an
+  // actual publish event.
+  bool timed_out = 2;
+}
+
+// BootstrapRendezvousRecord is an opaque rendezvous record. Never includes
+// write_token or its hash.
+message BootstrapRendezvousRecord {
+  string record_id = 1;
+  bytes ciphertext = 2;
+  bytes gcm_nonce = 3;
+  google.protobuf.Timestamp published_at = 4;
+}
+
+// AckBootstrapRendezvousRequest retires a record after successful fulfillment.
+message AckBootstrapRendezvousRequest {
+  string mesh_id = 1;
+  string record_id = 2;
+
+  // Required. Must hash (SHA-256) to the value stored for record_id, or the
+  // request is rejected (PERMISSION_DENIED) and the record is left untouched.
+  // Not checked when the record no longer exists (idempotent).
+  bytes write_token = 3;
+}
+
+// AckBootstrapRendezvousResponse confirms rendezvous record retirement.
+message AckBootstrapRendezvousResponse {
+  // True if the record was deleted (write_token matched), or was already
+  // gone (idempotent, not an error either way). False if the record still
+  // exists but write_token didn't match — this is a rejection, not a no-op.
+  bool success = 1;
 }

@@ -5,6 +5,7 @@ export interface Env {
   // Durable Object bindings.
   COLONY_REGISTRY: DurableObjectNamespace;
   DISCOVERY_METRICS: DurableObjectNamespace;
+  PROBE_QUOTA: DurableObjectNamespace;
 
   // Environment variables.
   ENVIRONMENT: string;
