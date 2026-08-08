@@ -156,7 +156,7 @@ describe("PSK-encrypted rendezvous (RFD 108)", () => {
         writeToken: b64("wrong-write-token"),
       })
     );
-    expect(second.status).toBe(400);
+    expect(second.status).toBe(403);
     expect(second.body.code).toBe("permission_denied");
 
     // The original record must still be intact.
