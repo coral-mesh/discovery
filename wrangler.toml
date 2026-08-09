@@ -26,11 +26,11 @@ new_sqlite_classes = ["DiscoveryMetrics"]
 # ProbeQuota (RFD 108) holds only in-memory state, no SQLite storage needed.
 [[migrations]]
 tag = "v5"
-new_classes = ["ProbeQuota"]
+new_sqlite_classes = ["ProbeQuota"]
 
 [vars]
 ENVIRONMENT = "production"
-SERVICE_VERSION = "0.3.1"
+SERVICE_VERSION = "0.4.1"
 LOG_LEVEL = "info"
 
 # Default TTL in seconds (5 minutes).
